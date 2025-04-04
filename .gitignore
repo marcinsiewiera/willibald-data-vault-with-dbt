@@ -104,7 +104,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
-env/
+#env/
 venv/
 ENV/
 env.bak/
@@ -128,7 +128,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 logs/
-dbt_packages/
+#dbt_packages/
 useful_scripts/_activate_database.ps1
 [~][$]*
 useful_scripts/activate_database_jb.sh

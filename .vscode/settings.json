@@ -1,0 +1,13 @@
+{
+    "dbt.enableNewLineagePanel": true,    
+    "terminal.integrated.env.osx": {
+        "DBT_PROFILES_DIR": ".",
+        "DBT_PROJECT_PATH": "${workspaceFolder}",
+        "DBT_PYTHON_PATH": "${workspaceFolder}/env/bin/python",
+        "DBT_SNOWFLAKE_ACCOUNT": "ebdvaox-sc66104",
+        "DBT_USER": "dbt",
+        "DBT_PASSWORD": "",
+        "DBT_DATABASE": "WILLIBALD_DATA_VAULT_WITH_DBT",
+        "DBT_SOURCE_DATABASE": "WILLIBALD_DATA_VAULT_WITH_DBT"
+    }
+}
