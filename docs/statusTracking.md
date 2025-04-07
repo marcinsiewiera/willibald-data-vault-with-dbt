@@ -79,107 +79,156 @@ The potential performance drawback of querying the status attribute in large des
 | **Table Count**           | **Con:** More tables                                      | **Pro:** Fewer tables                                            |
 | **Optimization Required** | Less critical for basic status queries                    | **Yes:** Indexing on status highly recommended for performance     |
 
-### SQL Examples (Conceptual PostgreSQL/T-SQL)
+### SQL Examples (Conceptual PostgreSQL/T-SQL) - Updated for Multiple Sources
 
 Assume:
-*   `hub_customer` (PK: `CustomerHashKey`, BK: `CustomerID`)
-*   `sat_customer_details` (PK: `CustomerHashKey`, `LoadDate`, Attrs: `Name`, `Address`, `HashDiff`) - *Used for both methods*
-*   `sts_customer_status` (PK: `CustomerHashKey`, `StatusLoadDate`, Attrs: `Status`) - *Method 1 Only*
-*   `sat_customer_details_with_status` (PK: `CustomerHashKey`, `LoadDate`, Attrs: `Name`, `Address`, `IsDeleted`, `HashDiff`) - *Method 2 Only*
-*   `pit_customer` (PK: `CustomerHashKey`, `SnapshotDate`, Columns: `LoadDate_Details`, `LoadDate_Status` [Method 1] or just `LoadDate` [Method 2], `IsDeleted` [pre-joined])
+*   Hub: `customer_h` (PK: `CUSTOMER_HK`, BK: `CUSTOMER_ID`)
+*   Source `ws` Satellites:
+    *   Descriptive: `customer_ws_s` (PK: `CUSTOMER_HK`, `LOAD_DATE`, Attrs: `NAME`, `ADDRESS`, `HASHDIFF`)
+    *   Status (Method 1): `customer_ws_sts` (PK: `CUSTOMER_HK`, `STATUS_LOAD_DATE`, Attrs: `STATUS`)
+*   Source `rs` Satellites (Same Attributes):
+    *   Descriptive: `customer_rs_s` (PK: `CUSTOMER_HK`, `LOAD_DATE`, Attrs: `NAME`, `ADDRESS`, `HASHDIFF`)
+    *   Status (Method 1): `customer_rs_sts` (PK: `CUSTOMER_HK`, `STATUS_LOAD_DATE`, Attrs: `STATUS`)
+*   Illustrative Satellites for Method 2:
+    *   `sat_customer_details_with_status_ws` (PK: `CustomerHashKey`, `LoadDate`, Attrs: `Name`, `Address`, `IsDeleted`, `HashDiff`)
+    *   `sat_customer_details_with_status_rs` (PK: `CustomerHashKey`, `LoadDate`, Attrs: `Name`, `Address`, `IsDeleted`, `HashDiff`)
+*   Snapshot View (built on `customer_snp` PIT): `customer_sns` (Contains pre-joined data from Hub and all relevant source satellites valid as of `SNAPSHOT_DATE`)
 
-**Example 1: Retrieving Current Status and Name**
+**Example 1: Retrieving Current Status and Attributes (Multi-Source)**
 
-*   **Method 1 (Using STS):**
+*   **Method 1 (Using Real STS Examples - `customer_ws_sts` & `customer_rs_sts`):**
+    *   Logic: Get latest status and attributes from each source independently, then combine using `COALESCE`.
+    *   Preference: `ws` source takes precedence over `rs` source when both are available.
 
 ```sql
-WITH LatestStatus AS (
+WITH LatestStatusWS AS (
+    -- Latest status from WS source
     SELECT
-        sts.CustomerHashKey,
-        sts.Status,
-        ROW_NUMBER() OVER(PARTITION BY sts.CustomerHashKey ORDER BY sts.StatusLoadDate DESC) as rn
-    FROM sts_customer_status sts
-), LatestDetails AS (
+        sts.CUSTOMER_HK,
+        sts.STATUS as STATUS_WS,
+        ROW_NUMBER() OVER(PARTITION BY sts.CUSTOMER_HK ORDER BY sts.STATUS_LOAD_DATE DESC) as rn
+    FROM customer_ws_sts sts
+),
+LatestStatusRS AS (
+    -- Latest status from RS source
     SELECT
-        scd.CustomerHashKey,
-        scd.Name,
-        ROW_NUMBER() OVER(PARTITION BY scd.CustomerHashKey ORDER BY scd.LoadDate DESC) as rn
-    FROM sat_customer_details scd
+        sts.CUSTOMER_HK,
+        sts.STATUS as STATUS_RS,
+        ROW_NUMBER() OVER(PARTITION BY sts.CUSTOMER_HK ORDER BY sts.STATUS_LOAD_DATE DESC) as rn
+    FROM customer_rs_sts sts
+),
+LatestDetailsWS AS (
+    -- Latest descriptive details from WS source
+    SELECT
+        scd.CUSTOMER_HK,
+        scd.NAME as NAME_WS,
+        scd.ADDRESS as ADDRESS_WS,
+        ROW_NUMBER() OVER(PARTITION BY scd.CUSTOMER_HK ORDER BY scd.LOAD_DATE DESC) as rn
+    FROM customer_ws_s scd
+),
+LatestDetailsRS AS (
+    -- Latest descriptive details from RS source
+    SELECT
+        scd.CUSTOMER_HK,
+        scd.NAME as NAME_RS,
+        scd.ADDRESS as ADDRESS_RS,
+        ROW_NUMBER() OVER(PARTITION BY scd.CUSTOMER_HK ORDER BY scd.LOAD_DATE DESC) as rn
+    FROM customer_rs_s scd
 )
+-- Final Select combining latest attributes and status with source precedence
 SELECT
-    hc.CustomerID,
-    ld.Name,
-    ls.Status -- Assuming 'A'/'D' or similar
-FROM hub_customer hc
-JOIN LatestDetails ld ON hc.CustomerHashKey = ld.CustomerHashKey AND ld.rn = 1
-JOIN LatestStatus ls ON hc.CustomerHashKey = ls.CustomerHashKey AND ls.rn = 1
-WHERE ls.Status = 'A'; -- Example: Get only currently 'Active' customers
+    hc.CUSTOMER_ID,
+    -- Coalesce descriptive attributes (WS takes precedence)
+    COALESCE(ws.NAME_WS, rs.NAME_RS) as NAME,
+    COALESCE(ws.ADDRESS_WS, rs.ADDRESS_RS) as ADDRESS,
+    -- Coalesce status (WS takes precedence)
+    COALESCE(sws.STATUS_WS, srs.STATUS_RS) as STATUS
+FROM customer_h hc
+LEFT JOIN LatestDetailsWS ws ON hc.CUSTOMER_HK = ws.CUSTOMER_HK AND ws.rn = 1
+LEFT JOIN LatestDetailsRS rs ON hc.CUSTOMER_HK = rs.CUSTOMER_HK AND rs.rn = 1
+LEFT JOIN LatestStatusWS sws ON hc.CUSTOMER_HK = sws.CUSTOMER_HK AND sws.rn = 1
+LEFT JOIN LatestStatusRS srs ON hc.CUSTOMER_HK = srs.CUSTOMER_HK AND srs.rn = 1
+WHERE
+    -- Example: Get only customers whose coalesced status is 'Active'
+    COALESCE(sws.STATUS_WS, srs.STATUS_RS) = 'A';
 ```
 
-*   **Method 2 (Using Embedded Status):**
+*   **Method 2 (Illustrative Example - Using Embedded Status - Multi-Source):**
+    *   Logic: Get latest record from each source's illustrative satellite, then combine using `COALESCE`.
+    *   Preference: `ws` source takes precedence over `rs` source when both are available.
 
 ```sql
-WITH LatestRecord AS (
+-- Note: This example uses illustrative table/column names.
+WITH LatestRecordWS AS (
     SELECT
         scdws.CustomerHashKey,
-        scdws.Name,
-        scdws.IsDeleted, -- Assuming boolean or 0/1
+        scdws.Name as Name_WS,
+        scdws.Address as Address_WS,
+        scdws.IsDeleted as IsDeleted_WS,
         ROW_NUMBER() OVER(PARTITION BY scdws.CustomerHashKey ORDER BY scdws.LoadDate DESC) as rn
-    FROM sat_customer_details_with_status scdws
+    FROM sat_customer_details_with_status_ws scdws -- Illustrative WS table
+),
+LatestRecordRS AS (
+    SELECT
+        scdrs.CustomerHashKey,
+        scdrs.Name as Name_RS,
+        scdrs.Address as Address_RS,
+        scdrs.IsDeleted as IsDeleted_RS,
+        ROW_NUMBER() OVER(PARTITION BY scdrs.CustomerHashKey ORDER BY scdrs.LoadDate DESC) as rn
+    FROM sat_customer_details_with_status_rs scdrs -- Illustrative RS table
 )
 SELECT
-    hc.CustomerID,
-    lr.Name,
-    lr.IsDeleted
-FROM hub_customer hc
-JOIN LatestRecord lr ON hc.CustomerHashKey = lr.CustomerHashKey AND lr.rn = 1
-WHERE lr.IsDeleted = false; -- Example: Get only currently non-deleted customers
+    hc.CUSTOMER_ID, -- From the real hub
+    -- Coalesce descriptive attributes (WS takes precedence)
+    COALESCE(ws.Name_WS, rs.Name_RS) as Name,
+    COALESCE(ws.Address_WS, rs.Address_RS) as Address,
+    -- Coalesce deletion status (deleted if either source indicates deletion)
+    COALESCE(ws.IsDeleted_WS, rs.IsDeleted_RS, false) as IsDeleted
+FROM customer_h hc -- Real hub
+LEFT JOIN LatestRecordWS ws ON hc.CUSTOMER_HK = ws.CustomerHashKey AND ws.rn = 1
+LEFT JOIN LatestRecordRS rs ON hc.CUSTOMER_HK = rs.CustomerHashKey AND rs.rn = 1
+WHERE
+    -- Example: Get only non-deleted customers based on coalesced status
+    COALESCE(ws.IsDeleted_WS, rs.IsDeleted_RS, false) = false;
 ```
 
-**Example 2: Retrieving Status from a Point-In-Time (PIT) Table**
+**Example 2: Retrieving Status from a Point-In-Time (PIT) / Snapshot View (Multi-Source)**
 
-Assume a PIT table `pit_customer` is built nightly, capturing the correct satellite `LoadDate` pointers for each `CustomerHashKey` as of the `SnapshotDate`. The PIT structure slightly differs depending on the chosen method.
+Assume the PIT (`customer_snp`) and Snapshot View (`customer_sns`) incorporate data from both source satellites (`ws` and `rs`). The view resolves the combined status and attributes using the same `COALESCE` logic as above, but as of the `SNAPSHOT_DATE`.
 
-*   **Method 1 (PIT referencing STS and Descriptive Sat):**
-    *   `pit_customer` columns might include: `CustomerHashKey`, `SnapshotDate`, `LoadDate_Details`, `LoadDate_Status`.
+*   **Method 1 (Querying the Real Snapshot View `customer_sns` - Multi-Source):**
+    *   The `customer_sns` view now includes coalesced columns from both sources, with `ws` taking precedence over `rs`.
 
 ```sql
--- Get Name and Status as of '2023-05-15'
+-- Get coalesced Name, Address, and Status as of '2023-05-15' using the Snapshot View
 SELECT
-    hc.CustomerID,
-    scd.Name,
-    sts.Status
-FROM pit_customer pit
-JOIN hub_customer hc ON pit.CustomerHashKey = hc.CustomerHashKey
-JOIN sat_customer_details scd
-    ON pit.CustomerHashKey = scd.CustomerHashKey
-    AND pit.LoadDate_Details = scd.LoadDate -- Join using the specific LoadDate from PIT
-JOIN sts_customer_status sts
-    ON pit.CustomerHashKey = sts.CustomerHashKey
-    AND pit.LoadDate_Status = sts.StatusLoadDate -- Join using the specific StatusLoadDate from PIT
+    sns.CUSTOMER_ID,     -- Directly from the view
+    sns.NAME,            -- Coalesced from both sources (ws preferred)
+    sns.ADDRESS,         -- Coalesced from both sources (ws preferred)
+    sns.STATUS           -- Coalesced from both sources (ws preferred)
+FROM customer_sns sns
 WHERE
-    pit.SnapshotDate = '2023-05-15' -- The date the PIT was built for
-    -- AND sts.Status = 'A' -- Optional: Filter further by status at that time
+    sns.SNAPSHOT_DATE = '2023-05-15' -- Filter the view by snapshot date
+    -- AND sns.STATUS = 'A' -- Optional: Filter further by status at that time
 ;
 ```
 
-*   **Method 2 (PIT referencing Descriptive Sat with Status):**
-    *   `pit_customer` columns might include: `CustomerHashKey`, `SnapshotDate`, `LoadDate`. The status is retrieved from the single referenced satellite record.
+*   **Method 2 (Querying an Illustrative Snapshot View based on Embedded Status - Multi-Source):**
+    *   The illustrative view (`customer_sns_method2_illustrative`) would be built incorporating data from both illustrative satellites, using `COALESCE` for attributes and status.
 
 ```sql
--- Get Name and Status as of '2023-05-15'
+-- Note: This example queries an illustrative snapshot view
+-- reflecting multiple sources with embedded status.
+-- Get coalesced Name, Address, and Deletion Status as of '2023-05-15'
 SELECT
-    hc.CustomerID,
-    scdws.Name,
-    scdws.IsDeleted
-FROM pit_customer pit
-JOIN hub_customer hc ON pit.CustomerHashKey = hc.CustomerHashKey
-JOIN sat_customer_details_with_status scdws
-    ON pit.CustomerHashKey = scdws.CustomerHashKey
-    AND pit.LoadDate = scdws.LoadDate -- Join using the single LoadDate pointer from PIT
+    sns.CUSTOMER_ID,       -- From illustrative view
+    sns.Name,              -- Coalesced from both sources (ws preferred)
+    sns.Address,           -- Coalesced from both sources (ws preferred)
+    sns.IsDeleted          -- Coalesced from both sources (deleted if either indicates)
+FROM customer_sns_method2_illustrative sns -- Querying the illustrative view
 WHERE
-    pit.SnapshotDate = '2023-05-15' -- The date the PIT was built for
-    -- AND scdws.IsDeleted = false -- Optional: Filter further by status at that time
+    sns.SNAPSHOT_DATE = '2023-05-15' -- Filter the view by snapshot date
+    -- AND sns.IsDeleted = false -- Optional: Filter further by status at that time
 ;
 
 ```
