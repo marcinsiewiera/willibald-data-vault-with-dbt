@@ -192,43 +192,182 @@ WHERE
     COALESCE(ws.IsDeleted_WS, rs.IsDeleted_RS, false) = false;
 ```
 
-**Example 2: Retrieving Status from a Point-In-Time (PIT) / Snapshot View (Multi-Source)**
+**Example 2: Retrieving Status from a Point-In-Time (PIT) Table and Snapshot View (Multi-Source)**
 
-Assume the PIT (`customer_snp`) and Snapshot View (`customer_sns`) incorporate data from both source satellites (`ws` and `rs`). The view resolves the combined status and attributes using the same `COALESCE` logic as above, but as of the `SNAPSHOT_DATE`.
-
-*   **Method 1 (Querying the Real Snapshot View `customer_sns` - Multi-Source):**
-    *   The `customer_sns` view now includes coalesced columns from both sources, with `ws` taking precedence over `rs`.
+*   **A. Populating the PIT Table:**
+    *   The PIT table needs to be created and populated with the business hash key, source-specific hash keys, and appropriate load date pointers for each satellite.
+    *   A properly structured multi-source PIT includes not just the load dates but also the hash keys for each source system.
 
 ```sql
--- Get coalesced Name, Address, and Status as of '2023-05-15' using the Snapshot View
+-- Conceptual SQL to populate a PIT table for customer with WS and RS sources
+-- This would typically be implemented as a dbt model, macro, or stored procedure
+
+INSERT INTO customer_snp (
+    CUSTOMER_HK,               -- Business hash key from hub (common across sources)
+    SNAPSHOT_DATE,             -- The effective date for this PIT
+    
+    -- WS Source Pointers
+    WS_CUSTOMER_HK,            -- WS-specific hash key (could be same as CUSTOMER_HK if no source-specific hash logic)
+    LOAD_DATE_WS_S,            -- Load date pointer to WS descriptive sat
+    LOAD_DATE_WS_STS,          -- Load date pointer to WS status sat
+    
+    -- RS Source Pointers
+    RS_CUSTOMER_HK,            -- RS-specific hash key
+    LOAD_DATE_RS_S,            -- Load date pointer to RS descriptive sat
+    LOAD_DATE_RS_STS           -- Load date pointer to RS status sat
+)
+WITH ValidSnapshotDates AS (
+    -- Get distinct list of snapshot dates to process (e.g., daily snapshots for the last 30 days)
+    SELECT DISTINCT SNAPSHOT_DATE
+    FROM snapshot_calendar
+    WHERE SNAPSHOT_DATE <= CURRENT_DATE
+    -- AND SNAPSHOT_DATE >= DATEADD(day, -30, CURRENT_DATE)
+),
+-- Identify relevant source-specific hash keys for each business key
+-- (In some implementations, these might be the same as the business hash key)
+SourceHKs AS (
+    SELECT 
+        CUSTOMER_HK,
+        MAX(CASE WHEN RECORD_SOURCE = 'WS' THEN CUSTOMER_HK END) AS WS_CUSTOMER_HK,
+        MAX(CASE WHEN RECORD_SOURCE = 'RS' THEN CUSTOMER_HK END) AS RS_CUSTOMER_HK
+    FROM customer_h
+    GROUP BY CUSTOMER_HK
+)
+-- Main query - cross join keys and snapshot dates only once
 SELECT
-    sns.CUSTOMER_ID,     -- Directly from the view
-    sns.NAME,            -- Coalesced from both sources (ws preferred)
-    sns.ADDRESS,         -- Coalesced from both sources (ws preferred)
-    sns.STATUS           -- Coalesced from both sources (ws preferred)
+    h.CUSTOMER_HK,                 -- Business hash key
+    vsd.SNAPSHOT_DATE,             -- Snapshot date
+    
+    -- WS Source Pointers
+    src.WS_CUSTOMER_HK,            -- WS-specific hash key
+    MAX(ws_s.LOAD_DATE) AS LOAD_DATE_WS_S,           -- WS descriptive sat load date
+    MAX(ws_sts.STATUS_LOAD_DATE) AS LOAD_DATE_WS_STS, -- WS status sat load date
+    
+    -- RS Source Pointers
+    src.RS_CUSTOMER_HK,            -- RS-specific hash key
+    MAX(rs_s.LOAD_DATE) AS LOAD_DATE_RS_S,           -- RS descriptive sat load date
+    MAX(rs_sts.STATUS_LOAD_DATE) AS LOAD_DATE_RS_STS  -- RS status sat load date
+FROM ValidSnapshotDates vsd
+CROSS JOIN customer_h h            -- Cross join happens only once here
+LEFT JOIN SourceHKs src ON h.CUSTOMER_HK = src.CUSTOMER_HK
+
+-- Join WS satellites for max load dates before snapshot date
+LEFT JOIN customer_ws_s ws_s 
+    ON h.CUSTOMER_HK = ws_s.CUSTOMER_HK 
+    AND ws_s.LOAD_DATE <= vsd.SNAPSHOT_DATE  -- Find records valid at snapshot date
+
+LEFT JOIN customer_ws_sts ws_sts 
+    ON h.CUSTOMER_HK = ws_sts.CUSTOMER_HK 
+    AND ws_sts.STATUS_LOAD_DATE <= vsd.SNAPSHOT_DATE  -- Find records valid at snapshot date
+
+-- Join RS satellites for max load dates before snapshot date
+LEFT JOIN customer_rs_s rs_s 
+    ON h.CUSTOMER_HK = rs_s.CUSTOMER_HK 
+    AND rs_s.LOAD_DATE <= vsd.SNAPSHOT_DATE  -- Find records valid at snapshot date
+
+LEFT JOIN customer_rs_sts rs_sts 
+    ON h.CUSTOMER_HK = rs_sts.CUSTOMER_HK 
+    AND rs_sts.STATUS_LOAD_DATE <= vsd.SNAPSHOT_DATE  -- Find records valid at snapshot date
+
+GROUP BY                           -- Group to find max load dates for each combo
+    h.CUSTOMER_HK,
+    vsd.SNAPSHOT_DATE,
+    src.WS_CUSTOMER_HK,
+    src.RS_CUSTOMER_HK;
+```
+
+*   **B. Direct Query using PIT Table (with Coalescing):**
+    *   A complete PIT table contains business hash keys, source-specific hash keys, and load date pointers.
+    *   When querying, use the appropriate source-specific hash keys to join to each satellite.
+
+```sql
+-- Method 1: Proper use of PIT table with dedicated STS and coalescing
+-- Get Name, Address, and Status as of '2023-05-15' using PIT with source-specific hash keys
+SELECT
+    hc.CUSTOMER_ID,
+    -- Coalesce attributes from both sources
+    COALESCE(ws_s.NAME, rs_s.NAME) as NAME,
+    COALESCE(ws_s.ADDRESS, rs_s.ADDRESS) as ADDRESS,
+    -- Coalesce status from both sources
+    COALESCE(ws_sts.STATUS, rs_sts.STATUS) as STATUS
+FROM customer_snp pit    -- PIT table
+JOIN customer_h hc ON pit.CUSTOMER_HK = hc.CUSTOMER_HK
+-- Join descriptive satellite WS using its specific hash key and load date pointer
+LEFT JOIN customer_ws_s ws_s
+    ON pit.WS_CUSTOMER_HK = ws_s.CUSTOMER_HK  -- Using source-specific hash key
+    AND pit.LOAD_DATE_WS_S = ws_s.LOAD_DATE
+-- Join status satellite WS
+LEFT JOIN customer_ws_sts ws_sts
+    ON pit.WS_CUSTOMER_HK = ws_sts.CUSTOMER_HK  -- Using source-specific hash key
+    AND pit.LOAD_DATE_WS_STS = ws_sts.STATUS_LOAD_DATE
+-- Join descriptive satellite RS
+LEFT JOIN customer_rs_s rs_s
+    ON pit.RS_CUSTOMER_HK = rs_s.CUSTOMER_HK  -- Using source-specific hash key
+    AND pit.LOAD_DATE_RS_S = rs_s.LOAD_DATE
+-- Join status satellite RS
+LEFT JOIN customer_rs_sts rs_sts
+    ON pit.RS_CUSTOMER_HK = rs_sts.CUSTOMER_HK  -- Using source-specific hash key
+    AND pit.LOAD_DATE_RS_STS = rs_sts.STATUS_LOAD_DATE
+WHERE
+    pit.SNAPSHOT_DATE = '2023-05-15' -- Filter PIT by snapshot date
+;
+
+-- Method 2 (Illustrative): Proper use of PIT table with embedded status and coalescing
+-- Get Name, Address, and IsDeleted as of '2023-05-15' using PIT with source-specific hash keys
+SELECT
+    hc.CUSTOMER_ID,
+    -- Coalesce attributes from both sources
+    COALESCE(ws_sat.Name, rs_sat.Name) as Name,
+    COALESCE(ws_sat.Address, rs_sat.Address) as Address,
+    -- Coalesce deletion status (deleted if either indicates)
+    CASE
+        WHEN ws_sat.IsDeleted = true OR rs_sat.IsDeleted = true THEN true
+        ELSE COALESCE(ws_sat.IsDeleted, rs_sat.IsDeleted, false)
+    END as IsDeleted
+FROM customer_snp_method2_illustrative pit    -- Illustrative PIT table
+JOIN customer_h hc ON pit.CUSTOMER_HK = hc.CUSTOMER_HK
+-- Join WS satellite using its source-specific hash key
+LEFT JOIN sat_customer_details_with_status_ws ws_sat
+    ON pit.WS_CUSTOMER_HK = ws_sat.CustomerHashKey  -- Using source-specific hash key
+    AND pit.LoadDate_WS = ws_sat.LoadDate
+-- Join RS satellite using its source-specific hash key
+LEFT JOIN sat_customer_details_with_status_rs rs_sat
+    ON pit.RS_CUSTOMER_HK = rs_sat.CustomerHashKey  -- Using source-specific hash key
+    AND pit.LoadDate_RS = rs_sat.LoadDate
+WHERE
+    pit.SNAPSHOT_DATE = '2023-05-15' -- Filter PIT by snapshot date
+;
+```
+
+*   **C. Using a Snapshot View (`customer_sns`):**
+    *   A Snapshot View is typically built *on top of* a PIT table to simplify the query pattern.
+    *   The view encapsulates all the complex satellite joins from the PIT and exposes a business-friendly interface.
+    *   This makes the PIT-based point-in-time query patterns much simpler for consumers.
+
+```sql
+-- Method 1: Querying the pre-built Snapshot View
+-- View internally handles all PIT-to-satellite joins and data coalescing
+SELECT
+    sns.CUSTOMER_ID,     -- From the view (originated from hub)
+    sns.NAME,            -- From the view (originated from satellites)
+    sns.ADDRESS,         -- From the view (originated from satellites)
+    sns.STATUS           -- From the view (originated from status satellites)
 FROM customer_sns sns
 WHERE
     sns.SNAPSHOT_DATE = '2023-05-15' -- Filter the view by snapshot date
     -- AND sns.STATUS = 'A' -- Optional: Filter further by status at that time
 ;
-```
 
-*   **Method 2 (Querying an Illustrative Snapshot View based on Embedded Status - Multi-Source):**
-    *   The illustrative view (`customer_sns_method2_illustrative`) would be built incorporating data from both illustrative satellites, using `COALESCE` for attributes and status.
-
-```sql
--- Note: This example queries an illustrative snapshot view
--- reflecting multiple sources with embedded status.
--- Get coalesced Name, Address, and Deletion Status as of '2023-05-15'
+-- Method 2 (Illustrative): Querying the pre-built Snapshot View with embedded status
+-- View internally handles all PIT-to-satellite joins and data coalescing
 SELECT
     sns.CUSTOMER_ID,       -- From illustrative view
-    sns.Name,              -- Coalesced from both sources (ws preferred)
-    sns.Address,           -- Coalesced from both sources (ws preferred)
-    sns.IsDeleted          -- Coalesced from both sources (deleted if either indicates)
-FROM customer_sns_method2_illustrative sns -- Querying the illustrative view
+    sns.Name,              -- From illustrative view
+    sns.Address,           -- From illustrative view
+    sns.IsDeleted          -- From illustrative view
+FROM customer_sns_method2_illustrative sns
 WHERE
     sns.SNAPSHOT_DATE = '2023-05-15' -- Filter the view by snapshot date
     -- AND sns.IsDeleted = false -- Optional: Filter further by status at that time
 ;
-
 ```
