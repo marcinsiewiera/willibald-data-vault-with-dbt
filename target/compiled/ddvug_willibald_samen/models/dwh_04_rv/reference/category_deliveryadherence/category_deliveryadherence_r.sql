@@ -23,6 +23,33 @@
 
 WITH
 
+
+    distinct_target_ref_keys AS (
+
+        SELECT
+            CONCAT(category_deliveryadherence_nk
+)
+        FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.category_deliveryadherence_r
+
+    ),
+         
+
+            rsrc_static_1 AS (SELECT 
+                    t.ldts,
+                    '*/misc/kategorie_termintreue/*' AS rsrc_static
+                    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.category_deliveryadherence_r t
+                    WHERE rsrc LIKE '*/misc/kategorie_termintreue/*'),
+
+        max_ldts_per_rsrc_static_in_target AS (
+        
+            SELECT
+                rsrc_static,
+                MAX(ldts) as max_ldts
+            FROM rsrc_static_1
+            WHERE ldts != TO_TIMESTAMP('8888-12-31T23:59:59', 'YYYY-MM-DDTHH24:MI:SS')
+            GROUP BY rsrc_static
+
+        ),
 src_new_1 AS (
 
         SELECT
@@ -46,6 +73,9 @@ records_to_insert AS (
         category_deliveryadherence_nk,
         ldts,
         rsrc
-    FROM earliest_ref_key_over_all_sources)
+    FROM earliest_ref_key_over_all_sources
+    WHERE CONCAT(category_deliveryadherence_nk
+) NOT IN (SELECT * FROM distinct_target_ref_keys)
+    )
 
 SELECT * FROM records_to_insert

@@ -18,6 +18,14 @@
 
 WITH
 
+existing_dimension_keys AS (
+
+    SELECT
+        hk_position_product_d
+    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_05_sn.position_product_snp
+
+),
+
 pit_records AS (
 
     SELECT
@@ -94,6 +102,8 @@ pit_records AS (
 records_to_insert AS (
 
     SELECT DISTINCT *
-    FROM pit_records)
+    FROM pit_records
+    WHERE hk_position_product_d NOT IN (SELECT * FROM existing_dimension_keys)
+    )
 
 SELECT * FROM records_to_insert

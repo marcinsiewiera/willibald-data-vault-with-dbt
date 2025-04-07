@@ -40,9 +40,23 @@ source_data AS (
         produktid,
         rabatt
     FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_stage.stg_roadshow_bestellung
+    WHERE ldts > (
+        SELECT
+            MAX(ldts) FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.position_rs_s
+        WHERE ldts != TO_TIMESTAMP('8888-12-31T23:59:59', 'YYYY-MM-DDTHH24:MI:SS')
+    )
 ),
 
 
+latest_entries_in_sat AS (
+
+    SELECT
+        hk_position_h,
+        hd_position_rs_s
+    FROM 
+        WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.position_rs_s
+    QUALIFY ROW_NUMBER() OVER(PARTITION BY hk_position_h ORDER BY ldts DESC) = 1  
+),
 
 
 deduplicated_numbered_source AS (
@@ -62,7 +76,7 @@ deduplicated_numbered_source AS (
         preis,
         produktid,
         rabatt
-    
+    , ROW_NUMBER() OVER(PARTITION BY hk_position_h ORDER BY ldts) as rn
     FROM source_data
     QUALIFY
         CASE
@@ -90,6 +104,12 @@ records_to_insert AS (
         produktid,
         rabatt
     FROM deduplicated_numbered_source
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM latest_entries_in_sat
+        WHERE latest_entries_in_sat.hk_position_h = deduplicated_numbered_source.hk_position_h
+            AND latest_entries_in_sat.hd_position_rs_s = deduplicated_numbered_source.hd_position_rs_s
+            AND deduplicated_numbered_source.rn = 1)
 
     )
 

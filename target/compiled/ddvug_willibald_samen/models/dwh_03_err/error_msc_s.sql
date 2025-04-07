@@ -30,9 +30,23 @@ source_data AS (
         raw_data,
         chk_all_msg
     FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_err.stg_error_misc
+    WHERE ldts > (
+        SELECT
+            MAX(ldts) FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_err.error_msc_s
+        WHERE ldts != TO_TIMESTAMP('8888-12-31T23:59:59', 'YYYY-MM-DDTHH24:MI:SS')
+    )
 ),
 
 
+latest_entries_in_sat AS (
+
+    SELECT
+        hk_error_h,
+        hd_error_s
+    FROM 
+        WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_err.error_msc_s
+    QUALIFY ROW_NUMBER() OVER(PARTITION BY hk_error_h ORDER BY ldts DESC) = 1  
+),
 
 
 deduplicated_numbered_source AS (
@@ -45,7 +59,7 @@ deduplicated_numbered_source AS (
         ldts,
         raw_data,
         chk_all_msg
-    
+    , ROW_NUMBER() OVER(PARTITION BY hk_error_h ORDER BY ldts) as rn
     FROM source_data
     QUALIFY
         CASE
@@ -66,6 +80,12 @@ records_to_insert AS (
         raw_data,
         chk_all_msg
     FROM deduplicated_numbered_source
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM latest_entries_in_sat
+        WHERE latest_entries_in_sat.hk_error_h = deduplicated_numbered_source.hk_error_h
+            AND latest_entries_in_sat.hd_error_s = deduplicated_numbered_source.hd_error_s
+            AND deduplicated_numbered_source.rn = 1)
 
     )
 

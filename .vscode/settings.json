@@ -6,7 +6,7 @@
         "DBT_PYTHON_PATH": "${workspaceFolder}/env/bin/python",
         "DBT_SNOWFLAKE_ACCOUNT": "ebdvaox-sc66104",
         "DBT_USER": "dbt",
-        "DBT_PASSWORD": "",
+        "DBT_PASSWORD": "2bW#*_@qBVmbST3",
         "DBT_DATABASE": "WILLIBALD_DATA_VAULT_WITH_DBT",
         "DBT_SOURCE_DATABASE": "WILLIBALD_DATA_VAULT_WITH_DBT"
     }

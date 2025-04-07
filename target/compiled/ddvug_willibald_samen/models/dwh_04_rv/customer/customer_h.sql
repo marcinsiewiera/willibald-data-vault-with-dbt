@@ -25,6 +25,93 @@
 WITH
 
 
+    distinct_target_hashkeys AS (
+
+        SELECT
+            hk_customer_h
+        FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_h
+
+    ),
+         
+
+            
+
+            rsrc_static_1 AS (SELECT 
+                    t.*,
+                    '*/roadshow/bestellung/*' AS rsrc_static
+                    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_h t
+                    WHERE rsrc like '*/roadshow/bestellung/*'),
+         
+
+            
+
+            rsrc_static_2 AS (SELECT 
+                    t.*,
+                    '*/webshop/bestellung/*' AS rsrc_static
+                    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_h t
+                    WHERE rsrc like '*/webshop/bestellung/*'),
+         
+
+            
+
+            rsrc_static_3 AS (SELECT 
+                    t.*,
+                    '*/webshop/kunde/*' AS rsrc_static
+                    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_h t
+                    WHERE rsrc like '*/webshop/kunde/*'),
+         
+
+            
+
+            rsrc_static_4 AS (SELECT 
+                    t.*,
+                    '*/webshop/lieferadresse/*' AS rsrc_static
+                    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_h t
+                    WHERE rsrc like '*/webshop/lieferadresse/*'),
+         
+
+            
+
+            rsrc_static_5 AS (SELECT 
+                    t.*,
+                    '*/webshop/vereinspartner/*' AS rsrc_static
+                    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_h t
+                    WHERE rsrc like '*/webshop/vereinspartner/*'),
+         
+
+            
+
+            rsrc_static_6 AS (SELECT 
+                    t.*,
+                    '*/webshop/wohnort/*' AS rsrc_static
+                    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_h t
+                    WHERE rsrc like '*/webshop/wohnort/*'),
+
+        rsrc_static_union AS (
+            
+            SELECT rsrc_static_1.* FROM rsrc_static_1
+            UNION ALL
+            SELECT rsrc_static_2.* FROM rsrc_static_2
+            UNION ALL
+            SELECT rsrc_static_3.* FROM rsrc_static_3
+            UNION ALL
+            SELECT rsrc_static_4.* FROM rsrc_static_4
+            UNION ALL
+            SELECT rsrc_static_5.* FROM rsrc_static_5
+            UNION ALL
+            SELECT rsrc_static_6.* FROM rsrc_static_6),
+
+        max_ldts_per_rsrc_static_in_target AS (
+        
+            SELECT
+                rsrc_static,
+                MAX(ldts) as max_ldts
+            FROM rsrc_static_union
+            WHERE ldts != TO_TIMESTAMP('8888-12-31T23:59:59', 'YYYY-MM-DDTHH24:MI:SS')
+            GROUP BY rsrc_static
+
+        ),
+
 
     src_new_1 AS (
 
@@ -160,6 +247,8 @@ records_to_insert AS (
         customer_bk,
         ldts,
         rsrc
-    FROM earliest_hk_over_all_sources)
+    FROM earliest_hk_over_all_sources
+    WHERE hk_customer_h NOT IN (SELECT * FROM distinct_target_hashkeys)
+    )
 
 SELECT * FROM records_to_insert

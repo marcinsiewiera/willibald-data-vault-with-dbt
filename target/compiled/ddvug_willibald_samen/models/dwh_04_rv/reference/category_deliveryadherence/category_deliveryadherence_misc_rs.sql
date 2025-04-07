@@ -38,9 +38,25 @@ source_data AS (
         count_days_to,
         name
     FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_stage.stg_misc_kategorie_termintreue
+    WHERE ldts > (
+        SELECT
+            MAX(ldts) FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.category_deliveryadherence_misc_rs
+        WHERE ldts != TO_TIMESTAMP('8888-12-31T23:59:59', 'YYYY-MM-DDTHH24:MI:SS')
+    )
 ),
 
 
+latest_entries_in_sat AS (
+
+    SELECT
+        
+        category_deliveryadherence_nk,
+        
+        hd_category_deliveryadherence_misc_rs
+    FROM 
+        WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.category_deliveryadherence_misc_rs
+    QUALIFY ROW_NUMBER() OVER(PARTITION BY category_deliveryadherence_nk ORDER BY ldts DESC) = 1  
+),
 
 
 deduplicated_numbered_source AS (
@@ -56,7 +72,7 @@ deduplicated_numbered_source AS (
         count_days_from,
         count_days_to,
         name
-    
+    , ROW_NUMBER() OVER(PARTITION BY category_deliveryadherence_nk ORDER BY ldts) as rn
     FROM source_data
     QUALIFY
         CASE
@@ -80,6 +96,15 @@ records_to_insert AS (
         count_days_to,
         name
     FROM deduplicated_numbered_source
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM latest_entries_in_sat
+        WHERE 1=1
+            
+            AND latest_entries_in_sat.category_deliveryadherence_nk = deduplicated_numbered_source.category_deliveryadherence_nk
+            
+            AND latest_entries_in_sat.hd_category_deliveryadherence_misc_rs = deduplicated_numbered_source.hd_category_deliveryadherence_misc_rs
+            AND deduplicated_numbered_source.rn = 1)
 
     )
 

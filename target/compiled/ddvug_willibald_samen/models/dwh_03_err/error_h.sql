@@ -20,6 +20,14 @@
 WITH
 
 
+    distinct_target_hashkeys AS (
+
+        SELECT
+            hk_error_h
+        FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_err.error_h
+
+    ),
+
 
     src_new_1 AS (
 
@@ -102,6 +110,8 @@ records_to_insert AS (
         error_file_bk,
         ldts,
         rsrc
-    FROM earliest_hk_over_all_sources)
+    FROM earliest_hk_over_all_sources
+    WHERE hk_error_h NOT IN (SELECT * FROM distinct_target_hashkeys)
+    )
 
 SELECT * FROM records_to_insert

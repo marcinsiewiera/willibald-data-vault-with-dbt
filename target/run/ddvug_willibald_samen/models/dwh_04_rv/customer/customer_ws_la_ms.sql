@@ -1,99 +1,42 @@
-
+-- back compat for old kwarg name
   
+  begin;
+    
+        
+            
+                
+                
+            
+                
+                
+            
+                
+                
+            
+        
     
 
-        create or replace  table WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_ws_la_ms
-         as
-        (
+    
 
-
+    merge into WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_ws_la_ms as DBT_INTERNAL_DEST
+        using WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_ws_la_ms__dbt_tmp as DBT_INTERNAL_SOURCE
+        on (
+                    DBT_INTERNAL_SOURCE.hk_customer_h = DBT_INTERNAL_DEST.hk_customer_h
+                ) and (
+                    DBT_INTERNAL_SOURCE.von = DBT_INTERNAL_DEST.von
+                ) and (
+                    DBT_INTERNAL_SOURCE.ldts = DBT_INTERNAL_DEST.ldts
+                )
 
     
-    WITH
+    when matched then update set
+        "HK_CUSTOMER_H" = DBT_INTERNAL_SOURCE."HK_CUSTOMER_H","HD_CUSTOMER_WS_LA_MS" = DBT_INTERNAL_SOURCE."HD_CUSTOMER_WS_LA_MS","RSRC" = DBT_INTERNAL_SOURCE."RSRC","LDTS" = DBT_INTERNAL_SOURCE."LDTS","VON" = DBT_INTERNAL_SOURCE."VON","ADRESSZUSATZ" = DBT_INTERNAL_SOURCE."ADRESSZUSATZ","BIS" = DBT_INTERNAL_SOURCE."BIS","HAUSNUMMER" = DBT_INTERNAL_SOURCE."HAUSNUMMER","LAND" = DBT_INTERNAL_SOURCE."LAND","ORT" = DBT_INTERNAL_SOURCE."ORT","PLZ" = DBT_INTERNAL_SOURCE."PLZ","STRASSE" = DBT_INTERNAL_SOURCE."STRASSE"
+    
 
+    when not matched then insert
+        ("HK_CUSTOMER_H", "HD_CUSTOMER_WS_LA_MS", "RSRC", "LDTS", "VON", "ADRESSZUSATZ", "BIS", "HAUSNUMMER", "LAND", "ORT", "PLZ", "STRASSE")
+    values
+        ("HK_CUSTOMER_H", "HD_CUSTOMER_WS_LA_MS", "RSRC", "LDTS", "VON", "ADRESSZUSATZ", "BIS", "HAUSNUMMER", "LAND", "ORT", "PLZ", "STRASSE")
 
-source_data AS (
-
-    SELECT
-        hk_customer_h,
-        hd_customer_ws_la_ms as hd_customer_ws_la_ms,
-        
-        rsrc,
-        ldts,
-        von,
-        adresszusatz,
-        bis,
-        hausnummer,
-        land,
-        ort,
-        plz,
-        strasse
-    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_stage.stg_webshop_wohnort
-
-),
-
-
-
-
-deduped_row_hashdiff AS (
-
-  SELECT 
-    hk_customer_h,
-    ldts,
-    hd_customer_ws_la_ms
-  FROM source_data
-  QUALIFY CASE
-            WHEN hd_customer_ws_la_ms = LAG(hd_customer_ws_la_ms) OVER (PARTITION BY hk_customer_h ORDER BY ldts) THEN FALSE
-            ELSE TRUE
-          END
-),
-
-
-deduped_rows AS (
-
-  SELECT 
-    source_data.hk_customer_h,
-    source_data.hd_customer_ws_la_ms,
-    source_data.rsrc
-        , source_data.ldts
-        , source_data.von
-        , source_data.adresszusatz
-        , source_data.bis
-        , source_data.hausnummer
-        , source_data.land
-        , source_data.ort
-        , source_data.plz
-        , source_data.strasse
-        
-  FROM source_data
-  INNER JOIN deduped_row_hashdiff
-    ON source_data.hk_customer_h = deduped_row_hashdiff.hk_customer_h
-    AND source_data.ldts = deduped_row_hashdiff.ldts
-    AND source_data.hd_customer_ws_la_ms = deduped_row_hashdiff.hd_customer_ws_la_ms
-
-),
-
-records_to_insert AS (
-
-    SELECT
-        deduped_rows.hk_customer_h,
-        deduped_rows.hd_customer_ws_la_ms,
-        deduped_rows.rsrc
-        , deduped_rows.ldts
-        , deduped_rows.von
-        , deduped_rows.adresszusatz
-        , deduped_rows.bis
-        , deduped_rows.hausnummer
-        , deduped_rows.land
-        , deduped_rows.ort
-        , deduped_rows.plz
-        , deduped_rows.strasse
-        
-    FROM deduped_rows
-
-    )
-
-SELECT * FROM records_to_insert
-        );
-      
-  
+;
+    commit;

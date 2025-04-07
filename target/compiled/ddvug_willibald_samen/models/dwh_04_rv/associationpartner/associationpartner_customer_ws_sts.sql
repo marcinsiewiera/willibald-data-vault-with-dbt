@@ -6,10 +6,9 @@ WITH
 
 cte_current_sts as
 (
-    select    '00000000000000000000000000000000' as hk_associationpartner_customer_l
-            , '' rsrc
-            , TO_TIMESTAMP('0001-01-01T00:00:01', 'YYYY-MM-DDTHH24:MI:SS') ldts
-            , 'I' as cdc
+    select sts.hk_associationpartner_customer_l, sts.rsrc, sts.ldts, cdc
+    from WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.associationpartner_customer_ws_sts sts
+    qualify row_number() over (PARTITION BY sts.hk_associationpartner_customer_l order by sts.ldts desc) = 1
 )
 ,
 cte_current_sts_not_deleted as
@@ -101,9 +100,3 @@ SELECT
     , cdc
 FROM cte_data_interpretation
 WHERE cdc<>'discard'
-UNION ALL
-SELECT 
-hk_associationpartner_customer_l
-    ,  ldts, rsrc
-    , cdc
-FROM cte_current_sts

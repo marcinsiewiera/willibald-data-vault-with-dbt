@@ -37,9 +37,23 @@ source_data AS (
         plz,
         strasse
     FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_stage.stg_webshop_lieferadresse
+    WHERE ldts > (
+        SELECT
+            MAX(ldts) FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.deliveryadress_ws_s
+        WHERE ldts != TO_TIMESTAMP('8888-12-31T23:59:59', 'YYYY-MM-DDTHH24:MI:SS')
+    )
 ),
 
 
+latest_entries_in_sat AS (
+
+    SELECT
+        hk_deliveryadress_h,
+        hd_deliveryadress_ws_s
+    FROM 
+        WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.deliveryadress_ws_s
+    QUALIFY ROW_NUMBER() OVER(PARTITION BY hk_deliveryadress_h ORDER BY ldts DESC) = 1  
+),
 
 
 deduplicated_numbered_source AS (
@@ -56,7 +70,7 @@ deduplicated_numbered_source AS (
         ort,
         plz,
         strasse
-    
+    , ROW_NUMBER() OVER(PARTITION BY hk_deliveryadress_h ORDER BY ldts) as rn
     FROM source_data
     QUALIFY
         CASE
@@ -81,6 +95,12 @@ records_to_insert AS (
         plz,
         strasse
     FROM deduplicated_numbered_source
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM latest_entries_in_sat
+        WHERE latest_entries_in_sat.hk_deliveryadress_h = deduplicated_numbered_source.hk_deliveryadress_h
+            AND latest_entries_in_sat.hd_deliveryadress_ws_s = deduplicated_numbered_source.hd_deliveryadress_ws_s
+            AND deduplicated_numbered_source.rn = 1)
 
     )
 

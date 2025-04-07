@@ -14,6 +14,7 @@ initial_timestamps AS (
         TABLE(GENERATOR(ROWCOUNT => 100000))
     WHERE 
         sdts <= CURRENT_TIMESTAMP
+    AND sdts > (SELECT MAX(sdts) FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_stage.control_snap_v0)
 
 ),
 

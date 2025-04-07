@@ -41,9 +41,23 @@ source_data AS (
         telefon,
         vorname
     FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_03_stage.stg_webshop_kunde
+    WHERE ldts > (
+        SELECT
+            MAX(ldts) FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_ws_s
+        WHERE ldts != TO_TIMESTAMP('8888-12-31T23:59:59', 'YYYY-MM-DDTHH24:MI:SS')
+    )
 ),
 
 
+latest_entries_in_sat AS (
+
+    SELECT
+        hk_customer_h,
+        hd_customer_ws_s
+    FROM 
+        WILLIBALD_DATA_VAULT_WITH_DBT.dwh_04_rv.customer_ws_s
+    QUALIFY ROW_NUMBER() OVER(PARTITION BY hk_customer_h ORDER BY ldts DESC) = 1  
+),
 
 
 deduplicated_numbered_source AS (
@@ -64,7 +78,7 @@ deduplicated_numbered_source AS (
         name,
         telefon,
         vorname
-    
+    , ROW_NUMBER() OVER(PARTITION BY hk_customer_h ORDER BY ldts) as rn
     FROM source_data
     QUALIFY
         CASE
@@ -93,6 +107,12 @@ records_to_insert AS (
         telefon,
         vorname
     FROM deduplicated_numbered_source
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM latest_entries_in_sat
+        WHERE latest_entries_in_sat.hk_customer_h = deduplicated_numbered_source.hk_customer_h
+            AND latest_entries_in_sat.hd_customer_ws_s = deduplicated_numbered_source.hd_customer_ws_s
+            AND deduplicated_numbered_source.rn = 1)
 
     )
 

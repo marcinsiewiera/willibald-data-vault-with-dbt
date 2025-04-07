@@ -16,6 +16,14 @@
 
 WITH
 
+existing_dimension_keys AS (
+
+    SELECT
+        d_category_deliveryadherence_nk
+    FROM WILLIBALD_DATA_VAULT_WITH_DBT.dwh_05_sn.category_deliveryadherence_r_snp
+
+),
+
 pit_records AS (
 
     SELECT
@@ -64,6 +72,8 @@ pit_records AS (
 records_to_insert AS (
 
     SELECT DISTINCT *
-    FROM pit_records)
+    FROM pit_records
+    WHERE d_category_deliveryadherence_nk NOT IN (SELECT * FROM existing_dimension_keys)
+    )
 
 SELECT * FROM records_to_insert
